@@ -1,0 +1,2760 @@
+# lib
+
+## Directory Structure
+
+- lib/
+  - gen.py
+  - main.dart
+  - models/
+    - calculation_result.dart
+    - practice_record.dart
+  - screens/
+    - machine_parameters_screen.dart
+    - records_screen.dart
+    - slot_analyzer_screen.dart
+  - services/
+    - record_service.dart
+    - slot_calculator.dart
+
+## File Contents
+
+### gen.py
+
+```
+import os
+import fnmatch
+import chardet
+
+def is_binary(file_path):
+    with open(file_path, 'rb') as file:
+        return b'\0' in file.read(1024)
+
+def read_file_contents(file_path):
+    encodings = ['utf-8', 'shift_jis']
+    for encoding in encodings:
+        try:
+            with open(file_path, 'r', encoding=encoding) as file:
+                print(f'Reading file: {file_path}')
+                return file.read()
+        except UnicodeDecodeError:
+            pass
+    return ''
+
+def is_ignored(path, project_dir, gitignore_patterns, summaryignore_patterns, additional_ignore_patterns):
+    relative_path = os.path.relpath(path, project_dir)
+    for pattern in gitignore_patterns + summaryignore_patterns + additional_ignore_patterns:
+        pattern = f"*{pattern}*"
+        if fnmatch.fnmatch(relative_path, pattern) or fnmatch.fnmatch(f'{os.sep}{relative_path}', pattern):
+            return True
+    return False
+
+def generate_project_summary(project_dir):
+    project_name = os.path.basename(project_dir)
+    summary = f'# {project_name}\n\n## Directory Structure\n\n'
+
+    gitignore_patterns = read_gitignore(project_dir)
+    print(f"gitignore_patterns: {gitignore_patterns}")
+    summaryignore_patterns = read_summaryignore(project_dir)
+    print(f"summaryignore_patterns: {summaryignore_patterns}")
+    additional_ignore_patterns = ['generate_project_summary.py','.summaryignore', f'{project_name}_project_summary.txt', '.git']
+
+    file_contents_section = "\n## File Contents\n\n"
+
+    def traverse_directory(root, level):
+        nonlocal summary, file_contents_section
+        indent = '  ' * level
+        relative_path = os.path.relpath(root, project_dir)
+        if not is_ignored(relative_path, project_dir, gitignore_patterns, summaryignore_patterns, additional_ignore_patterns):
+            summary += f'{indent}- {os.path.basename(root)}/\n'
+
+            subindent = '  ' * (level + 1)
+            for item in os.listdir(root):
+                item_path = os.path.join(root, item)
+                if os.path.isdir(item_path):
+                    if not is_ignored(item_path, project_dir, gitignore_patterns, summaryignore_patterns, additional_ignore_patterns):
+                        traverse_directory(item_path, level + 1)
+                else:
+                    if not is_ignored(item_path, project_dir, gitignore_patterns, summaryignore_patterns, additional_ignore_patterns):
+                        if not is_binary(item_path):
+                            summary += f'{subindent}- {item}\n'
+                            content = read_file_contents(item_path)
+                            if content.strip():
+                                # ファイル名をプロジェクト名からの相対パスで表示
+                                relative_file_path = os.path.relpath(item_path, project_dir)
+                                file_contents_section += f'### {relative_file_path}\n\n```\n{content}\n```\n\n'
+                        else:
+                            summary += f'{subindent}- {item} (binary file)\n'
+
+    traverse_directory(project_dir, 0)
+
+    with open(f'{project_name}_project_summary.txt', 'w', encoding='utf-8') as file:
+        file.write(summary + file_contents_section)
+
+def read_gitignore(project_dir):
+    gitignore_path = os.path.join(project_dir, '.gitignore')
+    if os.path.exists(gitignore_path):
+        with open(gitignore_path, 'r') as file:
+            patterns = [line.strip() for line in file if line.strip() and not line.startswith('#')]
+            expanded_patterns = []
+            for pattern in patterns:
+                expanded_patterns.append(pattern)
+                if '/' in pattern:
+                    expanded_patterns.append(pattern.replace('/', '\\'))
+                if '\\' in pattern:
+                    expanded_patterns.append(pattern.replace('\\', '/'))
+            return expanded_patterns
+    return []
+
+def read_summaryignore(project_dir):
+    summaryignore_path = os.path.join(project_dir, '.summaryignore')
+    if os.path.exists(summaryignore_path):
+        with open(summaryignore_path, 'r') as file:
+            patterns = [line.strip() for line in file if line.strip() and not line.startswith('#')]
+            expanded_patterns = []
+            for pattern in patterns:
+                expanded_patterns.append(pattern)
+                if '/' in pattern:
+                    expanded_patterns.append(pattern.replace('/', '\\'))
+                if '\\' in pattern:
+                    expanded_patterns.append(pattern.replace('\\', '/'))
+            return expanded_patterns
+    return []
+
+if __name__ == '__main__':
+    project_directory = input('Enter the project directory path (leave blank for current directory): ')
+    if not project_directory:
+        project_directory = os.getcwd()
+    generate_project_summary(project_directory)
+
+```
+
+### main.dart
+
+```
+// lib/main.dart
+
+import 'package:flutter/material.dart';
+import 'screens/slot_analyzer_screen.dart';
+
+void main() {
+  runApp(SlotAnalyzerApp());
+}
+
+class SlotAnalyzerApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '設定判別ツール',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      home: SlotAnalyzerScreen(),
+    );
+  }
+}
+```
+
+### models\calculation_result.dart
+
+```
+// lib/models/calculation_result.dart
+
+class CalculationResult {
+  final List<double> probabilities;
+  final double averageSettings;
+  final double averagePayout;
+  final double averageWage;
+  final List<String> probStrings;
+
+  CalculationResult({
+    required this.probabilities,
+    required this.averageSettings,
+    required this.averagePayout,
+    required this.averageWage,
+    required this.probStrings,
+  });
+}
+```
+
+### models\practice_record.dart
+
+```
+import '../services/record_service.dart';
+import '../services/slot_calculator.dart';
+
+class PracticeRecord {
+  final DateTime date;
+  final SlotMachine machine;
+  final int gameCount;
+  final double bigProbability;
+  final double regProbability;
+  final double bellProbability;
+  final int bellCount;
+  final int? coinDifference;  // 追加: 差枚数（nullable）
+
+  PracticeRecord({
+    required this.date,
+    required this.machine,
+    required this.gameCount,
+    required this.bigProbability,
+    required this.regProbability,
+    required this.bellProbability,
+    required this.bellCount,
+    this.coinDifference,  // 追加
+  });
+
+  // コピーと更新のためのメソッドを追加
+  PracticeRecord copyWith({
+    DateTime? date,
+    SlotMachine? machine,
+    int? gameCount,
+    double? bigProbability,
+    double? regProbability,
+    double? bellProbability,
+    int? bellCount,
+    int? coinDifference,
+  }) {
+    return PracticeRecord(
+      date: date ?? this.date,
+      machine: machine ?? this.machine,
+      gameCount: gameCount ?? this.gameCount,
+      bigProbability: bigProbability ?? this.bigProbability,
+      regProbability: regProbability ?? this.regProbability,
+      bellProbability: bellProbability ?? this.bellProbability,
+      bellCount: bellCount ?? this.bellCount,
+      coinDifference: coinDifference ?? this.coinDifference,
+    );
+  }
+
+  // 数値またはInfinityを安全にパースするヘルパーメソッド
+  static double _parseDoubleOrInfinity(dynamic value) {
+    if (value == null || value == 'Infinity') {
+      return double.infinity;
+    }
+    if (value is num) {
+      return value.toDouble();
+    }
+    try {
+      return double.parse(value.toString());
+    } catch (e) {
+      return double.infinity;
+    }
+  }
+
+  factory PracticeRecord.fromJson(Map<String, dynamic> json) {
+    return PracticeRecord(
+      date: DateTime.parse(json['date']),
+      machine: SlotMachine.values.firstWhere(
+            (e) => e.toString() == json['machine'],
+      ),
+      gameCount: json['gameCount'],
+      bigProbability: _parseDoubleOrInfinity(json['bigProbability']),
+      regProbability: _parseDoubleOrInfinity(json['regProbability']),
+      bellProbability: _parseDoubleOrInfinity(json['bellProbability'] ?? 'Infinity'),
+      bellCount: json['bellCount'] ?? 0,
+      coinDifference: json['coinDifference'],  // 追加
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'date': date.toIso8601String(),
+      'machine': machine.toString(),
+      'gameCount': gameCount,
+      'bigProbability': bigProbability.isInfinite ? 'Infinity' : bigProbability,
+      'regProbability': regProbability.isInfinite ? 'Infinity' : regProbability,
+      'bellProbability': bellProbability.isInfinite ? 'Infinity' : bellProbability,
+      'bellCount': bellCount,
+      'coinDifference': coinDifference,  // 追加
+    };
+  }
+}
+```
+
+### screens\machine_parameters_screen.dart
+
+```
+// lib/screens/machine_parameters_screen.dart
+
+import 'package:flutter/material.dart';
+import '../services/slot_calculator.dart';
+
+class MachineParametersScreen extends StatelessWidget {
+  final SlotMachine machine;
+  final Map<String, double> currentValues;
+
+  const MachineParametersScreen({
+    Key? key,
+    required this.machine,
+    required this.currentValues,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final params = SlotCalculator.machineParameters[machine]!;
+    final machineName = _getMachineName(machine);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('$machineNameのパラメータ'),
+      ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildParameterSection('基本パラメータ', {
+                'PAYOUT': params['payout']!,
+                'BIG': params['single_big']!,
+                'REG': params['single_reg']!,
+                'ベル': params['bell']!,
+              }, {
+                'BIG': currentValues['single_big'],
+                'REG': currentValues['single_reg'],
+                'ベル': currentValues['bell'],
+              }),
+              _buildParameterSection('BIG関連', {
+                'BIG中スイカ': params['big_suika']!,
+                'BIGレトロサウンド': params['big_retro_sound']!,
+                'BIG後青': params['big_blue']!,
+                'BIG後黄': params['big_yellow']!,
+                'BIG後緑': params['big_green']!,
+                'BIG後赤': params['big_red']!,
+                'BIG後虹': params['big_rainbow']!,
+                'BIG後白': params['big_white']!,
+              }, {
+                'BIG中スイカ': currentValues['big_suika'],
+                'BIGレトロサウンド': currentValues['big_retro_sound'],
+                'BIG後青': currentValues['big_blue'],
+                'BIG後黄': currentValues['big_yellow'],
+                'BIG後緑': currentValues['big_green'],
+                'BIG後赤': currentValues['big_red'],
+                'BIG後虹': currentValues['big_rainbow'],
+                'BIG後白': currentValues['big_white'],
+              }),
+              _buildParameterSection('REG関連', {
+                'REGサイド青': params['side_blue']!,
+                'REGサイド黄': params['side_yellow']!,
+                'REGサイド緑': params['side_green']!,
+                'REGサイド赤': params['side_red']!,
+                'REGサイド虹': params['side_rainbow']!,
+                'REG後青': params['reg_blue']!,
+                'REG後黄': params['reg_yellow']!,
+                'REG後緑': params['reg_green']!,
+                'REG後赤': params['reg_red']!,
+                'REG後虹': params['reg_rainbow']!,
+                'REG後白': params['reg_white']!,
+              }, {
+                'REGサイド青': currentValues['side_blue'],
+                'REGサイド黄': currentValues['side_yellow'],
+                'REGサイド緑': currentValues['side_green'],
+                'REGサイド赤': currentValues['side_red'],
+                'REGサイド虹': currentValues['side_rainbow'],
+                'REG後青': currentValues['reg_blue'],
+                'REG後黄': currentValues['reg_yellow'],
+                'REG後緑': currentValues['reg_green'],
+                'REG後赤': currentValues['reg_red'],
+                'REG後虹': currentValues['reg_rainbow'],
+                'REG後白': currentValues['reg_white'],
+              }),
+              _buildParameterSection('着席時データカウンター', {
+                'BIG合算': params['big_sum']!,
+                'REG合算': params['reg_sum']!,
+              }, {
+                'BIG合算': currentValues['big_sum'],
+                'REG合算': currentValues['reg_sum'],
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildParameterSection(
+      String title,
+      Map<String, List<double>> parameters,
+      Map<String, double?> currentValues,
+      ) {
+    final entries = parameters.entries.toList();
+    final rows = (entries.length / 2).ceil();
+
+    return Card(
+      margin: EdgeInsets.symmetric(vertical: 8.0),
+      child: Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
+            ...List.generate(rows, (rowIndex) {
+              final startIndex = rowIndex * 2;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _buildParameterItem(entries[startIndex], currentValues),
+                  ),
+                  SizedBox(width: 8),
+                  if (startIndex + 1 < entries.length)
+                    Expanded(
+                      child: _buildParameterItem(
+                          entries[startIndex + 1], currentValues),
+                    )
+                  else
+                    Expanded(child: Container()),
+                ],
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildParameterItem(
+      MapEntry<String, List<double>> entry,
+      Map<String, double?> currentValues,
+      ) {
+    final currentValue = currentValues[entry.key];
+    List<int>? closestSettingIndices;
+    double? minDifference;
+
+    if (currentValue != null) {
+      closestSettingIndices = [];
+      for (int i = 0; i < entry.value.length; i++) {
+        double difference = (entry.value[i] - currentValue).abs();
+        if (minDifference == null || difference < minDifference) {
+          minDifference = difference;
+          closestSettingIndices = [i];
+        } else if (difference == minDifference) {
+          closestSettingIndices?.add(i);
+        }
+      }
+    }
+
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 4.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(entry.key),
+              ),
+              if (currentValue != null) ...[
+                SizedBox(width: 8),
+                Text(
+                  '(現在: ${currentValue.toStringAsFixed(3)})',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          Column(
+            children: List.generate(6, (index) {
+              bool isClosest = closestSettingIndices?.contains(index) ?? false;
+              return Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(8),
+                margin: EdgeInsets.only(top: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isClosest ? Colors.blue : Colors.grey,
+                    width: isClosest ? 2.0 : 1.0,
+                  ),
+                  borderRadius: BorderRadius.circular(4),
+                  color: isClosest ? Colors.blue.withOpacity(0.1) : null,
+                ),
+                child: Text(
+                  '設定${index + 1}: ${entry.value[index].toStringAsFixed(3)}',
+                  style: TextStyle(
+                    fontWeight: isClosest ? FontWeight.bold : FontWeight.normal,
+                    color: isClosest ? Colors.blue : null,
+                  ),
+                ),
+              );
+            }),
+          ),
+          SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  String _getMachineName(SlotMachine machine) {
+    switch (machine) {
+      case SlotMachine.kingHanahana:
+        return 'キングハナハナ';
+      case SlotMachine.hanahanaHouou:
+        return 'ハナハナホウオウ天翔';
+      case SlotMachine.dragonHanahana:
+        return 'ドラゴンハナハナ閃光';
+    }
+  }
+}
+```
+
+### screens\records_screen.dart
+
+```
+// lib/screens/records_screen.dart
+
+import 'package:flutter/material.dart';
+import '../models/practice_record.dart';
+import '../services/record_service.dart';
+import '../services/slot_calculator.dart';
+
+class RecordsScreen extends StatefulWidget {
+  @override
+  _RecordsScreenState createState() => _RecordsScreenState();
+}
+
+class _RecordsScreenState extends State<RecordsScreen> {
+  List<PracticeRecord> _records = [];
+  Map<SlotMachine, Map<String, dynamic>> _summaries = {};
+  Set<PracticeRecord> _selectedRecords = {};
+  bool _isSelectionMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    try {
+      final records = await RecordService.getAllRecords();
+      final summaries = await RecordService.getMachineSummaries();
+      if (mounted) {
+        setState(() {
+          _records = records..sort((a, b) => b.date.compareTo(a.date));
+          _summaries = summaries;
+        });
+      }
+    } catch (e) {
+      print('Error loading data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('データの読み込み中にエラーが発生しました'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showCoinDifferenceDialog(PracticeRecord record) async {
+    final controller = TextEditingController(
+      text: record.coinDifference?.toString() ?? '',
+    );
+
+    return showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('差枚数の入力'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_formatDate(record.date)}\n'
+                  '${_getMachineName(record.machine)}\n'
+                  '実践G数: ${record.gameCount}G',
+              style: TextStyle(fontSize: 14),
+            ),
+            SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.numberWithOptions(signed: true),
+              decoration: InputDecoration(
+                labelText: '差枚数',
+                suffix: Text('枚'),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final value = int.tryParse(controller.text);
+              if (value != null) {
+                await RecordService.updateCoinDifference(
+                  record.date,
+                  record.machine,
+                  value,
+                );
+                Navigator.pop(context);
+                _loadData();  // データを再読み込み
+              }
+            },
+            child: Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getMachineName(SlotMachine machine) {
+    switch (machine) {
+      case SlotMachine.kingHanahana:
+        return 'キングハナハナ';
+      case SlotMachine.hanahanaHouou:
+        return 'ハナハナホウオウ天翔';
+      case SlotMachine.dragonHanahana:
+        return 'ドラゴンハナハナ閃光';
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.year}/${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _deleteSelectedRecords() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('削除の確認'),
+        content: Text('選択した${_selectedRecords.length}件の記録を削除しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              '削除',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await RecordService.deleteRecords(_selectedRecords.toList());
+      await _loadData();
+      setState(() {
+        _selectedRecords.clear();
+        _isSelectionMode = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('選択した記録を削除しました')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('実践記録'),
+          actions: [
+            if (_records.isNotEmpty) ...[
+              if (_isSelectionMode) ...[
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      if (_selectedRecords.length == _records.length) {
+                        _selectedRecords.clear();
+                      } else {
+                        _selectedRecords = Set.from(_records);
+                      }
+                    });
+                  },
+                  child: Text(
+                    _selectedRecords.length == _records.length ? '全解除' : '全選択',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.delete),
+                  onPressed: _selectedRecords.isEmpty ? null : _deleteSelectedRecords,
+                ),
+              ],
+              IconButton(
+                icon: Icon(_isSelectionMode ? Icons.close : Icons.select_all),
+                onPressed: () {
+                  setState(() {
+                    _isSelectionMode = !_isSelectionMode;
+                    if (!_isSelectionMode) {
+                      _selectedRecords.clear();
+                    }
+                  });
+                },
+              ),
+            ],
+          ],
+          bottom: TabBar(
+            tabs: [
+              Tab(text: '記録一覧'),
+              Tab(text: '機種別集計'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildRecordsList(),
+            _buildMachineSummaries(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecordsList() {
+    if (_records.isEmpty) {
+      return Center(
+        child: Text('記録がありません'),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _records.length,
+      itemBuilder: (context, index) {
+        final record = _records[index];
+        final isSelected = _selectedRecords.contains(record);
+
+        return Card(
+          margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: InkWell(
+            onTap: _isSelectionMode
+                ? () {
+              setState(() {
+                if (isSelected) {
+                  _selectedRecords.remove(record);
+                } else {
+                  _selectedRecords.add(record);
+                }
+              });
+            }
+                : () => _showCoinDifferenceDialog(record),
+            onLongPress: !_isSelectionMode
+                ? () {
+              setState(() {
+                _isSelectionMode = true;
+                _selectedRecords.add(record);
+              });
+            }
+                : null,
+            child: Container(
+              color: isSelected ? Colors.blue.withOpacity(0.1) : null,
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _getMachineName(record.machine),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _formatDate(record.date),
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    Text('実践G数: ${record.gameCount}G'),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'BIG確率: ${RecordService.getProbabilityFraction(record.bigProbability)}',
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'REG確率: ${RecordService.getProbabilityFraction(record.regProbability)}',
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      'ベル確率: ${RecordService.getProbabilityFraction(record.bellProbability)} (${record.bellCount}回)',
+                    ),
+                    if (record.coinDifference != null) ...[
+                      SizedBox(height: 4),
+                      Text(
+                        '差枚数: ${record.coinDifference}枚',
+                        style: TextStyle(
+                          color: record.coinDifference! >= 0
+                              ? Colors.blue
+                              : Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMachineSummaries() {
+    if (_summaries.isEmpty) {
+      return Center(
+        child: Text('記録がありません'),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _summaries.length,
+      itemBuilder: (context, index) {
+        final machine = _summaries.keys.elementAt(index);
+        final summary = _summaries[machine]!;
+        final totalCoinDifference = summary['totalCoinDifference'] ?? 0;
+        final totalGames = summary['totalGames'] ?? 0;
+
+        // 機械割の計算
+        double machinePercentage = 100.0;  // デフォルト値
+        if (totalGames > 0) {
+          // (総実践ゲーム数×3 + 総差枚数) / (総実践ゲーム数×3) × 100
+          machinePercentage = ((totalGames * 3 + totalCoinDifference) / (totalGames * 3)) * 100;
+        }
+
+        return Card(
+          margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _getMachineName(machine),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text('総実践G数: ${summary['totalGames']}G'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('総BIG回数: ${summary['totalBigCount']}回'),
+                          Text(
+                            'BIG確率: ${RecordService.getProbabilityFraction(summary['avgBigProbability'] ?? double.infinity)}',
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('総REG回数: ${summary['totalRegCount']}回'),
+                          Text(
+                            'REG確率: ${RecordService.getProbabilityFraction(summary['avgRegProbability'] ?? double.infinity)}',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                Divider(),
+                Text('ベル'),
+                Text(
+                  '総回数: ${summary['totalbellCount']}回\n'
+                      '確率: ${RecordService.getProbabilityFraction(summary['avgbellProbability'] ?? double.infinity)}',
+                ),
+                if (totalCoinDifference != 0) ...[
+                  Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '総差枚数: ${totalCoinDifference}枚',
+                        style: TextStyle(
+                          color: totalCoinDifference >= 0 ? Colors.blue : Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '機械割: ${machinePercentage.toStringAsFixed(2)}%',
+                        style: TextStyle(
+                          color: machinePercentage >= 100 ? Colors.blue : Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  )
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+```
+
+### screens\slot_analyzer_screen.dart
+
+```
+// lib/screens/slot_analyzer_screen.dart
+
+import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:slot_calc/screens/records_screen.dart';
+import '../../models/calculation_result.dart';
+import '../../services/slot_calculator.dart';
+import '../models/practice_record.dart';
+import '../services/record_service.dart';
+import 'machine_parameters_screen.dart';
+
+class SlotAnalyzerScreen extends StatefulWidget {
+  @override
+  _SlotAnalyzerScreenState createState() => _SlotAnalyzerScreenState();
+}
+
+class _SlotAnalyzerScreenState extends State<SlotAnalyzerScreen> with WidgetsBindingObserver{
+  // 機種選択の状態を保存するキー
+  static const String _selectedMachineKey = 'selectedMachine';
+
+  SlotMachine selectedMachine = SlotMachine.kingHanahana;
+  final _formKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController(); // ScrollController追加
+  bool _showHaibun = false;
+
+  // TextEditingController群
+  final currentGameController = TextEditingController();
+  final countSingleBigController = TextEditingController();
+  final countSingleRegController = TextEditingController();
+  final countBellController = TextEditingController();
+  final bigRetroSoundController = TextEditingController();
+  final startGameController = TextEditingController();
+  final regSumController = TextEditingController();
+  final bigSumController = TextEditingController();
+
+  // BIG後の色別コントローラー
+  final countBigBlueController = TextEditingController();
+  final countBigYellowController = TextEditingController();
+  final countBigGreenController = TextEditingController();
+  final countBigRedController = TextEditingController();
+  final countBigRainbowController = TextEditingController();
+  final countBigWhiteController = TextEditingController();
+
+  // REGサイドの色別コントローラー
+  final countSideBlueController = TextEditingController();
+  final countSideYellowController = TextEditingController();
+  final countSideGreenController = TextEditingController();
+  final countSideRedController = TextEditingController();
+  final countSideRainbowController = TextEditingController();
+
+  // REG後の色別コントローラー
+  final countRegBlueController = TextEditingController();
+  final countRegYellowController = TextEditingController();
+  final countRegGreenController = TextEditingController();
+  final countRegRedController = TextEditingController();
+  final countRegRainbowController = TextEditingController();
+  final countRegWhiteController = TextEditingController();
+
+  //BIG中スイカのコントローラー
+  final bigGamesController = TextEditingController();
+  final extraBigGamesController = TextEditingController();
+  final bigSuikaController = TextEditingController();
+
+  bool _showColorInputs = false; // 色別入力の表示制御用
+
+  final List<TextEditingController> haibunControllers =
+  List.generate(6, (index) => TextEditingController());
+
+  // 計算結果
+  CalculationResult? result;
+
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadSavedData();
+    // 必要なコントローラーのみにリスナーを追加
+    void addFractionListener(TextEditingController controller) {
+      controller.addListener(() {
+        // 分数表示が必要なフィールドの値が変更された時のみ更新
+        if (mounted) {
+          final newValue = controller.text;
+          if (_shouldUpdateFraction(newValue)) {
+            setState(() {});
+          }
+        }
+      });
+    }
+
+    // 分数表示が必要なコントローラーのみにリスナーを追加
+    addFractionListener(currentGameController);
+    addFractionListener(startGameController);
+    addFractionListener(countBellController);
+    addFractionListener(bigRetroSoundController);
+    addFractionListener(regSumController);
+    addFractionListener(bigSumController);
+
+    countSingleBigController.addListener(() {
+      if (countSingleBigController.text.isNotEmpty) {
+        final bigCount = int.tryParse(countSingleBigController.text) ?? 0;
+        final gameNum = SlotCalculator.machineParameters[selectedMachine]!['big_game_num']![0];
+        setState(() {
+          bigGamesController.text = (bigCount * gameNum).toInt().toString();
+        });
+      } else {
+        setState(() {
+          bigGamesController.text = '';
+        });
+      }
+    });
+  }
+
+  // 分数の更新が必要かどうかを判定
+  bool _shouldUpdateFraction(String value) {
+    return value.isNotEmpty && int.tryParse(value) != null;
+  }
+
+  @override
+  void dispose() {
+    _saveData();
+    WidgetsBinding.instance.removeObserver(this);
+    _scrollController.dispose();
+    // コントローラーの破棄
+    currentGameController.dispose();
+    countSingleBigController.dispose();
+    countSingleRegController.dispose();
+    countBellController.dispose();
+    bigRetroSoundController.dispose();
+    startGameController.dispose();
+    regSumController.dispose();
+    bigSumController.dispose();
+
+    // 新しいコントローラーの破棄
+    countBigBlueController.dispose();
+    countBigYellowController.dispose();
+    countBigGreenController.dispose();
+    countBigRedController.dispose();
+    countBigRainbowController.dispose();
+    countBigWhiteController.dispose();
+
+    countSideBlueController.dispose();
+    countSideYellowController.dispose();
+    countSideGreenController.dispose();
+    countSideRedController.dispose();
+    countSideRainbowController.dispose();
+
+    countRegBlueController.dispose();
+    countRegYellowController.dispose();
+    countRegGreenController.dispose();
+    countRegRedController.dispose();
+    countRegRainbowController.dispose();
+    countRegWhiteController.dispose();
+
+    bigGamesController.dispose();
+    extraBigGamesController.dispose();
+    bigSuikaController.dispose();
+
+    for (var controller in haibunControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _saveData();
+    }
+    // スリープからの復帰時の処理を追加
+    if (state == AppLifecycleState.resumed) {
+      // UIを強制的に再構築
+      setState(() {});
+      // フォーカスを一度解放して再設定
+      _focusNode.unfocus();
+      Future.delayed(Duration(milliseconds: 100), () {
+        if (mounted) {
+          FocusScope.of(context).requestFocus(FocusNode());
+        }
+      });
+    }
+  }
+  // データの保存
+  Future<void> _saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+    // 機種選択の保存
+    await prefs.setInt(_selectedMachineKey, selectedMachine.index);
+
+    await prefs.setString('currentGame', currentGameController.text);
+    await prefs.setString('countSingleBig', countSingleBigController.text);
+    await prefs.setString('countSingleReg', countSingleRegController.text);
+    await prefs.setString('countBell', countBellController.text);
+    await prefs.setString('bigRetroSound', bigRetroSoundController.text);
+    await prefs.setString('startGame', startGameController.text);
+    await prefs.setString('regSum', regSumController.text);
+    await prefs.setString('bigSum', bigSumController.text);
+
+    // BIG後の色別データ
+    await prefs.setString('countBigBlue', countBigBlueController.text);
+    await prefs.setString('countBigYellow', countBigYellowController.text);
+    await prefs.setString('countBigGreen', countBigGreenController.text);
+    await prefs.setString('countBigRed', countBigRedController.text);
+    await prefs.setString('countBigRainbow', countBigRainbowController.text);
+    await prefs.setString('countBigWhite', countBigWhiteController.text);
+
+    // REGサイドの色別データ
+    await prefs.setString('countSideBlue', countSideBlueController.text);
+    await prefs.setString('countSideYellow', countSideYellowController.text);
+    await prefs.setString('countSideGreen', countSideGreenController.text);
+    await prefs.setString('countSideRed', countSideRedController.text);
+    await prefs.setString('countSideRainbow', countSideRainbowController.text);
+
+    // REG後の色別データ
+    await prefs.setString('countRegBlue', countRegBlueController.text);
+    await prefs.setString('countRegYellow', countRegYellowController.text);
+    await prefs.setString('countRegGreen', countRegGreenController.text);
+    await prefs.setString('countRegRed', countRegRedController.text);
+    await prefs.setString('countRegRainbow', countRegRainbowController.text);
+    await prefs.setString('countRegWhite', countRegWhiteController.text);
+
+    //BIG中スイカ
+    await prefs.setString('bigGames', bigGamesController.text);
+    await prefs.setString('extraBigGames', extraBigGamesController.text);
+    await prefs.setString('bigSuika', bigSuikaController.text);
+
+    for (int i = 0; i < haibunControllers.length; i++) {
+      await prefs.setString('haibun$i', haibunControllers[i].text);
+    }
+  }
+
+  // 保存したデータの読み込み
+  Future<void> _loadSavedData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      // 機種選択の読み込み
+      final savedMachineIndex = prefs.getInt(_selectedMachineKey);
+      if (savedMachineIndex != null) {
+        selectedMachine = SlotMachine.values[savedMachineIndex];
+      }
+
+      currentGameController.text = prefs.getString('currentGame') ?? '';
+      countSingleBigController.text = prefs.getString('countSingleBig') ?? '';
+      countSingleRegController.text = prefs.getString('countSingleReg') ?? '';
+      countBellController.text = prefs.getString('countBell') ?? '';
+      bigRetroSoundController.text = prefs.getString('bigRetroSound') ?? '';
+      startGameController.text = prefs.getString('startGame') ?? '';
+      regSumController.text = prefs.getString('regSum') ?? '';
+      bigSumController.text = prefs.getString('bigSum') ?? '';
+
+      // BIG後の色別データ
+      countBigBlueController.text = prefs.getString('countBigBlue') ?? '';
+      countBigYellowController.text = prefs.getString('countBigYellow') ?? '';
+      countBigGreenController.text = prefs.getString('countBigGreen') ?? '';
+      countBigRedController.text = prefs.getString('countBigRed') ?? '';
+      countBigRainbowController.text = prefs.getString('countBigRainbow') ?? '';
+      countBigWhiteController.text = prefs.getString('countBigWhite') ?? '';
+
+      // REGサイドの色別データ
+      countSideBlueController.text = prefs.getString('countSideBlue') ?? '';
+      countSideYellowController.text = prefs.getString('countSideYellow') ?? '';
+      countSideGreenController.text = prefs.getString('countSideGreen') ?? '';
+      countSideRedController.text = prefs.getString('countSideRed') ?? '';
+      countSideRainbowController.text = prefs.getString('countSideRainbow') ?? '';
+
+      // REG後の色別データ
+      countRegBlueController.text = prefs.getString('countRegBlue') ?? '';
+      countRegYellowController.text = prefs.getString('countRegYellow') ?? '';
+      countRegGreenController.text = prefs.getString('countRegGreen') ?? '';
+      countRegRedController.text = prefs.getString('countRegRed') ?? '';
+      countRegRainbowController.text = prefs.getString('countRegRainbow') ?? '';
+      countRegWhiteController.text = prefs.getString('countRegWhite') ?? '';
+
+      //BIG中スイカ
+      bigGamesController.text = prefs.getString('bigGames') ?? '';
+      extraBigGamesController.text = prefs.getString('extraBigGames') ?? '';
+      bigSuikaController.text = prefs.getString('bigSuika') ?? '';
+
+      for (int i = 0; i < haibunControllers.length; i++) {
+        haibunControllers[i].text = prefs.getString('haibun$i') ?? '';
+      }
+    });
+  }
+
+  // ボーナス・小役確率フォームのクリア
+  void _clearBonusForm() {
+    setState(() {
+      currentGameController.clear();
+      countSingleBigController.clear();
+      countSingleRegController.clear();
+      bigGamesController.clear();
+      extraBigGamesController.clear();
+      bigSuikaController.clear();
+      countBellController.clear();
+      bigRetroSoundController.clear();
+    });
+    _saveData();
+  }
+
+  // データカウンターフォームのクリア
+  void _clearCounterForm() {
+    setState(() {
+      startGameController.clear();
+      regSumController.clear();
+      bigSumController.clear();
+    });
+    _saveData();
+  }
+
+  void _clearColorInputs() {
+    setState(() {
+      // BIG後の色別カウントをクリア
+      countBigBlueController.clear();
+      countBigYellowController.clear();
+      countBigGreenController.clear();
+      countBigRedController.clear();
+      countBigRainbowController.clear();
+      countBigWhiteController.clear();
+
+      // REGサイドの色別カウントをクリア
+      countSideBlueController.clear();
+      countSideYellowController.clear();
+      countSideGreenController.clear();
+      countSideRedController.clear();
+      countSideRainbowController.clear();
+
+      // REG後の色別カウントをクリア
+      countRegBlueController.clear();
+      countRegYellowController.clear();
+      countRegGreenController.clear();
+      countRegRedController.clear();
+      countRegRainbowController.clear();
+      countRegWhiteController.clear();
+    });
+    _saveData(); // 保存済みデータも更新
+  }
+
+  void _calculate() {
+    if (_formKey.currentState!.validate()) {
+      setState(() {
+        result = SlotCalculator.calculate(
+          currentGame: currentGameController.text,
+          countSingleBig: countSingleBigController.text,
+          countSingleReg: countSingleRegController.text,
+          bigGames: bigGamesController.text,
+          extraBigGames: extraBigGamesController.text,
+          bigSuika: bigSuikaController.text,
+          countBell: countBellController.text,
+          startGame: startGameController.text,
+          regSum: regSumController.text,
+          bigSum: bigSumController.text,
+          bigRetroSound: bigRetroSoundController.text,
+          countBigBlue: countBigBlueController.text,
+          countBigYellow: countBigYellowController.text,
+          countBigGreen: countBigGreenController.text,
+          countBigRed: countBigRedController.text,
+          countBigRainbow: countBigRainbowController.text,
+          countBigWhite: countBigWhiteController.text,
+          countSideBlue: countSideBlueController.text,
+          countSideYellow: countSideYellowController.text,
+          countSideGreen: countSideGreenController.text,
+          countSideRed: countSideRedController.text,
+          countSideRainbow: countSideRainbowController.text,
+          countRegBlue: countRegBlueController.text,
+          countRegYellow: countRegYellowController.text,
+          countRegGreen: countRegGreenController.text,
+          countRegRed: countRegRedController.text,
+          countRegRainbow: countRegRainbowController.text,
+          countRegWhite: countRegWhiteController.text,
+          haibun: haibunControllers.map((c) => c.text).toList(),
+          machine: selectedMachine,
+        );
+      });
+
+      // 計算後、少し遅延させてスクロール
+      Future.delayed(Duration(milliseconds: 100), () {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+  }
+
+  // TextFormFieldを作成するメソッドを修正
+  Widget _buildInputField(
+      String label,
+      TextEditingController controller,
+      {String? suffix, Color? backgroundColor}
+      ) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 8.0),
+      child: TextFormField(
+        controller: controller,
+        // キー属性を追加して、ウィジェットを一意に識別
+        key: ValueKey('${label}_${DateTime.now().millisecondsSinceEpoch}'),
+        decoration: InputDecoration(
+          labelText: label,
+          suffix: suffix != null ? Text(suffix) : null,
+          border: OutlineInputBorder(),
+          filled: backgroundColor != null,
+          fillColor: backgroundColor,
+        ),
+        keyboardType: TextInputType.number,
+        // フォーカス関連の属性を追加
+        focusNode: _focusNode,
+        enableInteractiveSelection: true,
+        enabled: true,
+        validator: (value) {
+          if (value == null || value.isEmpty) {
+            return null;
+          }
+          if (int.tryParse(value) == null) {
+            return '数値を入力してください';
+          }
+          return null;
+        },
+      ),
+    );
+  }
+
+  // 分数を計算して文字列で返す関数
+  String _calculateFraction(String count, String total) {
+    if (count.isEmpty || total.isEmpty) return '';
+    int? countNum = int.tryParse(count);
+    int? totalNum = int.tryParse(total);
+    if (countNum == null || totalNum == null || totalNum == 0 || countNum == 0) return '';
+
+    double ratio = totalNum / countNum;
+    return '1/${ratio.toStringAsFixed(2)}';
+  }
+
+  void _saveRecord() async {
+    final gameCount = (int.tryParse(currentGameController.text) ?? 0) -
+        (int.tryParse(startGameController.text) ?? 0);
+
+    if (gameCount <= 0) {
+      Fluttertoast.showToast(msg: "有効なゲーム数を入力してください");
+      return;
+    }
+
+    final countSingleBig = int.tryParse(countSingleBigController.text) ?? 0;
+    final countSingleReg = int.tryParse(countSingleRegController.text) ?? 0;
+    final countBell = int.tryParse(countBellController.text) ?? 0;
+
+    final totalBIG = countSingleBig;
+    final totalREG = countSingleReg;
+
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('記録の保存確認'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('以下の内容で保存しますか？'),
+            SizedBox(height: 8),
+            Text('実践G数: ${gameCount}G'),
+            Text('BIG: ${totalBIG}回'),
+            Text('REG: ${totalREG}回'),
+            Text('ベル: ${countBell}回'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldSave != true) return;
+
+    final record = PracticeRecord(
+      date: DateTime.now(),
+      machine: selectedMachine,
+      gameCount: gameCount,
+      bigProbability: totalBIG > 0 ? gameCount / totalBIG : double.infinity,
+      regProbability: totalREG > 0 ? gameCount / totalREG : double.infinity,
+      bellProbability: countBell > 0 ? gameCount / countBell : double.infinity,
+      bellCount: countBell,
+    );
+
+    await RecordService.saveRecord(record);
+    Fluttertoast.showToast(msg: "記録を保存しました");
+  }
+
+  // 入力フィールドと分数表示を含むウィジェット
+  Widget _buildInputFieldWithFraction(
+      String label,
+      TextEditingController controller,
+      {String? suffix,
+        String? totalValue,
+        bool showFraction = false,
+        bool enabled = true}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: controller,
+          enabled: enabled,
+          decoration: InputDecoration(
+            labelText: label,
+            suffix: suffix != null ? Text(suffix) : null,
+            border: OutlineInputBorder(),
+          ),
+          keyboardType: TextInputType.number,
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return null;
+            }
+            if (int.tryParse(value) == null) {
+              return '数値を入力してください';
+            }
+            return null;
+          },
+        ),
+        if (showFraction && totalValue != null)
+          Padding(
+            padding: EdgeInsets.only(top: 4.0),
+            child: Text(
+              _calculateFraction(controller.text, totalValue),
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        // 画面タップ時にフォーカスを解除
+        FocusScope.of(context).unfocus();
+      },
+      child: Scaffold(
+        body: Column(
+          children: [
+            // 機種選択カード - 固定表示部分
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<SlotMachine>(
+                        isExpanded: true,
+                        value: selectedMachine,
+                        onChanged: (SlotMachine? newValue) {
+                          setState(() {
+                            selectedMachine = newValue!;
+                            _saveData();
+                          });
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: SlotMachine.kingHanahana,
+                            child: Text('キングハナハナ'),
+                          ),
+                          DropdownMenuItem(
+                            value: SlotMachine.hanahanaHouou,
+                            child: Text('ハナハナホウオウ天翔'),
+                          ),
+                          DropdownMenuItem(
+                            value: SlotMachine.dragonHanahana,
+                            child: Text('ドラゴンハナハナ～閃光～'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.info_outline),
+                      onPressed: () {
+                        // 現在の確率を計算
+                        Map<String, double> currentValues = {};
+
+                        // BIG確率
+                        if (currentGameController.text.isNotEmpty && countSingleBigController.text.isNotEmpty) {
+                          int games = int.tryParse(currentGameController.text) ?? 0;
+                          int count = (int.tryParse(countSingleBigController.text) ?? 0) + (int.tryParse(bigSumController.text) ?? 0);
+                          if (games > 0 && count > 0) {
+                            currentValues['single_big'] = games / count;
+                          }
+                        }
+
+                        // REG確率
+                        if (currentGameController.text.isNotEmpty && countSingleRegController.text.isNotEmpty) {
+                          int games = int.tryParse(currentGameController.text) ?? 0;
+                          int count = (int.tryParse(countSingleRegController.text) ?? 0) + (int.tryParse(regSumController.text) ?? 0);
+                          if (games > 0 && count > 0) {
+                            currentValues['single_reg'] = games / count;
+                          }
+                        }
+
+                        // ベル確率
+                        if (currentGameController.text.isNotEmpty && countBellController.text.isNotEmpty) {
+                          int games = (int.tryParse(currentGameController.text) ?? 0) - (int.tryParse(startGameController.text) ?? 0);
+                          int count = int.tryParse(countBellController.text) ?? 0;
+                          if (games > 0 && count > 0) {
+                            currentValues['bell'] = games / count;
+                          }
+                        }
+
+                        // BIG中スイカ確率
+                        if (bigGamesController.text.isNotEmpty && bigSuikaController.text.isNotEmpty) {
+                          int games = int.tryParse(bigGamesController.text) ?? 0;
+                          int extraGames = int.tryParse(extraBigGamesController.text) ?? 0;  // 余剰ゲーム数を取得
+                          int count = int.tryParse(bigSuikaController.text) ?? 0;
+                          if ((games + extraGames) > 0 && count > 0) {  // 合計ゲーム数を使用
+                            currentValues['big_suika'] = (games + extraGames) / count;
+                          }
+                        }
+
+                        // レトロサウンド確率
+                        if (countSingleBigController.text.isNotEmpty && bigRetroSoundController.text.isNotEmpty) {
+                          int total = int.tryParse(countSingleBigController.text) ?? 0;
+                          int count = int.tryParse(bigRetroSoundController.text) ?? 0;
+                          if (total > 0 && count > 0) {
+                            currentValues['big_retro_sound'] = total / count;
+                          }
+                        }
+
+                        // BIG合算確率
+                        if (startGameController.text.isNotEmpty && bigSumController.text.isNotEmpty) {
+                          int games = int.tryParse(startGameController.text) ?? 0;
+                          int count = int.tryParse(bigSumController.text) ?? 0;
+                          if (games > 0 && count > 0) {
+                            currentValues['big_sum'] = games / count;
+                          }
+                        }
+
+                        // REG合算確率
+                        if (startGameController.text.isNotEmpty && regSumController.text.isNotEmpty) {
+                          int games = int.tryParse(startGameController.text) ?? 0;
+                          int count = int.tryParse(regSumController.text) ?? 0;
+                          if (games > 0 && count > 0) {
+                            currentValues['reg_sum'] = games / count;
+                          }
+                        }
+
+                        // 色別確率の計算（BIG後）
+                        void addColorValue(String key, String count) {
+                          if (countSingleBigController.text.isNotEmpty && count.isNotEmpty) {
+                            int total = int.tryParse(countSingleBigController.text) ?? 0;
+                            int colorCount = int.tryParse(count) ?? 0;
+                            if (total > 0 && colorCount > 0) {
+                              currentValues[key] = total / colorCount;
+                            }
+                          }
+                        }
+
+                        addColorValue('big_blue', countBigBlueController.text);
+                        addColorValue('big_yellow', countBigYellowController.text);
+                        addColorValue('big_green', countBigGreenController.text);
+                        addColorValue('big_red', countBigRedController.text);
+                        addColorValue('big_rainbow', countBigRainbowController.text);
+                        addColorValue('big_white', countBigWhiteController.text);
+
+                        // REGサイドの色別確率
+                        void addSideValue(String key, String count) {
+                          if (countSingleRegController.text.isNotEmpty && count.isNotEmpty) {
+                            int total = int.tryParse(countSingleRegController.text) ?? 0;
+                            int colorCount = int.tryParse(count) ?? 0;
+                            if (total > 0 && colorCount > 0) {
+                              currentValues[key] = total / colorCount;
+                            }
+                          }
+                        }
+
+                        addSideValue('side_blue', countSideBlueController.text);
+                        addSideValue('side_yellow', countSideYellowController.text);
+                        addSideValue('side_green', countSideGreenController.text);
+                        addSideValue('side_red', countSideRedController.text);
+                        addSideValue('side_rainbow', countSideRainbowController.text);
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => MachineParametersScreen(
+                              machine: selectedMachine,
+                              currentValues: currentValues,
+                            ),
+                          ),
+                        );
+                      },
+                      tooltip: '機種パラメータ表示',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // スクロール可能な残りのコンテンツ
+            Expanded(
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                padding: EdgeInsets.all(16.0),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('着席時データカウンター',
+                                      style: Theme.of(context).textTheme.titleLarge),
+                                  TextButton(
+                                    onPressed: _clearCounterForm,
+                                    child: Text('クリア'),
+                                  ),
+                                ],
+                              ),
+                              _buildInputField('ゲーム数', startGameController, suffix: 'G中'),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildInputFieldWithFraction(
+                                      'BIG',
+                                      bigSumController,
+                                      suffix: '回',
+                                      totalValue: startGameController.text,
+                                      showFraction: true,
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildInputFieldWithFraction(
+                                      'REG',
+                                      regSumController,
+                                      suffix: '回',
+                                      totalValue: startGameController.text,
+                                      showFraction: true,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('ボーナス・小役確率',
+                                      style: Theme.of(context).textTheme.titleLarge),
+                                  TextButton(
+                                    onPressed: _clearBonusForm,
+                                    child: Text('クリア'),
+                                  ),
+                                ],
+                              ),
+                              _buildInputField('現在の総ゲーム数', currentGameController, suffix: 'G中'),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildInputFieldWithFraction(
+                                      'BIG',
+                                      countSingleBigController,
+                                      suffix: '回',
+                                      totalValue: ((int.tryParse(currentGameController.text) ?? 0) - (int.tryParse(startGameController.text) ?? 0)).toString(),
+                                      showFraction: true,
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildInputFieldWithFraction(
+                                      'REG',
+                                      countSingleRegController,
+                                      suffix: '回',
+                                      totalValue: ((int.tryParse(currentGameController.text) ?? 0) - (int.tryParse(startGameController.text) ?? 0)).toString(),
+                                      showFraction: true,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildInputField('BIGゲーム数', bigGamesController, suffix: 'G'),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildInputField('余剰BIGゲーム数', extraBigGamesController, suffix: 'G'),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildInputField('BIG中スイカ回数', bigSuikaController, suffix: '回'),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildInputFieldWithFraction(
+                                      'BIGレトロサウンド',
+                                      bigRetroSoundController,
+                                      suffix: '回',
+                                      totalValue: (int.tryParse(countSingleBigController.text) ?? 0).toString(),
+                                      showFraction: false,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildInputFieldWithFraction(
+                                      'ベル',
+                                      countBellController,
+                                      suffix: '回',
+                                      totalValue: ((int.tryParse(currentGameController.text) ?? 0) - (int.tryParse(startGameController.text) ?? 0)).toString(),
+                                      showFraction: true,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            ],
+                          ),
+                        ),
+                      ),
+                      ExpansionPanelList(
+                        elevation: 1,
+                        expandedHeaderPadding: EdgeInsets.all(0),
+                        children: [
+                          ExpansionPanel(
+                            headerBuilder: (context, isExpanded) {
+                              return ListTile(
+                                title: Text('色別カウント入力'),
+                                onTap: () {
+                                  setState(() {
+                                    _showColorInputs = !_showColorInputs;
+                                  });
+                                },
+                              );
+                            },
+                            body: Padding(
+                              padding: EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      TextButton(
+                                        onPressed: _clearColorInputs,
+                                        child: Text('色別カウントをクリア'),
+                                      ),
+                                    ],
+                                  ),
+                                  Text('BIG後の色', style: Theme.of(context).textTheme.titleMedium),
+                                  SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('青', countBigBlueController, suffix: '回', backgroundColor: Colors.blue[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('黄', countBigYellowController, suffix: '回', backgroundColor: Colors.yellow[100]),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('緑', countBigGreenController, suffix: '回', backgroundColor: Colors.green[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('赤', countBigRedController, suffix: '回', backgroundColor: Colors.red[600]),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('虹', countBigRainbowController, suffix: '回', backgroundColor: Colors.pink[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('白', countBigWhiteController, suffix: '回', backgroundColor: Colors.grey[100]),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: 16),
+                                  Text('REGサイドの色', style: Theme.of(context).textTheme.titleMedium),
+                                  SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('青', countSideBlueController, backgroundColor: Colors.blue[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('黄', countSideYellowController, backgroundColor: Colors.yellow[100]),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('緑', countSideGreenController, backgroundColor: Colors.green[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('赤', countSideRedController, backgroundColor: Colors.red[600]),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('虹', countSideRainbowController, backgroundColor: Colors.pink[100]),
+                                      ),
+                                      Expanded(child: SizedBox()),
+                                    ],
+                                  ),
+                                  SizedBox(height: 16),
+                                  Text('REG後の色', style: Theme.of(context).textTheme.titleMedium),
+                                  SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('青', countRegBlueController, backgroundColor: Colors.blue[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('黄', countRegYellowController, backgroundColor: Colors.yellow[100]),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('緑', countRegGreenController, backgroundColor: Colors.green[100]),
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: _buildInputField('赤', countRegRedController, backgroundColor: Colors.red[600]),
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildInputField('虹', countRegRainbowController, backgroundColor: Colors.pink[100]),
+                                      ),
+                                      Expanded(child: SizedBox()),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            isExpanded: _showColorInputs,
+                          ),
+                        ],
+                        expansionCallback: (panelIndex, isExpanded) {
+                          setState(() {
+                            _showColorInputs = !_showColorInputs;
+                          });
+                        },
+                      ),
+                      SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _saveRecord,
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: Text('記録を保存'),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (context) => RecordsScreen()),
+                                );
+                              },
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: Text('記録を表示'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 16),
+                      ExpansionPanelList(
+                        elevation: 1,
+                        expandedHeaderPadding: EdgeInsets.all(0),
+                        children: [
+                          ExpansionPanel(
+                            headerBuilder: (context, isExpanded) {
+                              return ListTile(
+                                title: Text('設定配分を入力'),
+                                onTap: () {
+                                  setState(() {
+                                    _showHaibun = !_showHaibun;
+                                  });
+                                },
+                              );
+                            },
+                            body: Padding(
+                              padding: EdgeInsets.all(16.0),
+                              child: Column(
+                                children: [
+                                  for (int i = 0; i < 6; i += 2)
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: _buildInputField(
+                                              '設定${i + 1}',
+                                              haibunControllers[i],
+                                              suffix: '台'
+                                          ),
+                                        ),
+                                        SizedBox(width: 8),
+                                        Expanded(
+                                          child: _buildInputField(
+                                              '設定${i + 2}',
+                                              haibunControllers[i + 1],
+                                              suffix: '台'
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  SizedBox(height: 16),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                    children: [
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            for (var controller in haibunControllers) {
+                                              controller.text = '1';
+                                            }
+                                          });
+                                          _saveData();
+                                        },
+                                        child: Text('均等'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            final values = [10, 40, 35, 11, 5, 1];
+                                            for (int i = 0; i < haibunControllers.length; i++) {
+                                              haibunControllers[i].text = values[i].toString();
+                                            }
+                                          });
+                                          _saveData();
+                                        },
+                                        child: Text('通常'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            final values = [10, 40, 25, 15, 11, 2];
+                                            for (int i = 0; i < haibunControllers.length; i++) {
+                                              haibunControllers[i].text = values[i].toString();
+                                            }
+                                          });
+                                          _saveData();
+                                        },
+                                        child: Text('特日'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            isExpanded: _showHaibun,
+                          ),
+                        ],
+                        expansionCallback: (panelIndex, isExpanded) {
+                          setState(() {
+                            _showHaibun = !_showHaibun;
+                          });
+                        },
+                      ),
+                      SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: _calculate,
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Text('設定判別する'),
+                        ),
+                      ),
+                      if (result != null) ...[
+                        SizedBox(height: 16),
+                        Card(
+                          child: Padding(
+                            padding: EdgeInsets.all(16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('設定期待度',
+                                    style: Theme.of(context).textTheme.titleLarge),
+                                ...List.generate(6, (index) {
+                                  return Column(
+                                    children: [
+                                      SizedBox(height: 8),
+                                      Text('設定${index + 1}: ${result!.probabilities[index]}%'),
+                                      LinearProgressIndicator(
+                                        value: (result!.probabilities[index] / 100).isNaN ?
+                                        0.0 :
+                                        (result!.probabilities[index] / 100).clamp(0.0, 1.0),
+                                      ),
+                                    ],
+                                  );
+                                }),
+                                SizedBox(height: 16),
+                                Text('各平均期待値',
+                                    style: Theme.of(context).textTheme.titleMedium),
+                                ListTile(
+                                  title: Text('平均設定'),
+                                  trailing: Text('${result!.averageSettings}'),
+                                ),
+                                ListTile(
+                                  title: Text('平均PAYOUT'),
+                                  trailing: Text('${result!.averagePayout}%'),
+                                ),
+                                ListTile(
+                                  title: Text('平均時給(800G/時)'),
+                                  trailing: Text('${result!.averageWage}円(${result!.averageWage/20}枚)'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+### services\record_service.dart
+
+```
+// lib/services/record_service.dart
+
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/practice_record.dart';
+import '../services/slot_calculator.dart';
+
+class RecordService {
+  static const String _recordsKey = 'practice_records';
+
+  // データを移行するメソッド
+  static Future<void> migrateData() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> records = prefs.getStringList(_recordsKey) ?? [];
+
+    bool needsMigration = false;
+    List<String> migratedRecords = [];
+
+    for (var record in records) {
+      try {
+        final data = jsonDecode(record);
+        if (!data.containsKey('bellCount')) {
+          needsMigration = true;
+          // 古いデータに新しいフィールドを追加
+          data['bellCount'] = 0;
+          data['bellProbability'] = 'Infinity';
+        }
+        migratedRecords.add(jsonEncode(data));
+      } catch (e) {
+        print('Error migrating record: $e');
+        needsMigration = true;
+      }
+    }
+
+    if (needsMigration) {
+      await prefs.setStringList(_recordsKey, migratedRecords);
+    }
+  }
+
+  // 全記録を取得する前にデータ移行を実行
+  static Future<List<PracticeRecord>> getAllRecords() async {
+    await migrateData(); // データ移行を実行
+
+    final prefs = await SharedPreferences.getInstance();
+    List<String> records = prefs.getStringList(_recordsKey) ?? [];
+    return records
+        .map((str) => PracticeRecord.fromJson(jsonDecode(str)))
+        .toList();
+  }
+
+  // 記録を保存
+  static Future<void> saveRecord(PracticeRecord record) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> records = prefs.getStringList(_recordsKey) ?? [];
+    records.add(jsonEncode(record.toJson()));
+    await prefs.setStringList(_recordsKey, records);
+  }
+
+  //差枚を入力して保存
+  static Future<void> updateCoinDifference(DateTime date, SlotMachine machine, int coinDifference) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> records = prefs.getStringList(_recordsKey) ?? [];
+
+    final updatedRecords = records.map((record) {
+      final data = jsonDecode(record);
+      if (data['date'] == date.toIso8601String() && data['machine'] == machine.toString()) {
+        data['coinDifference'] = coinDifference;
+      }
+      return jsonEncode(data);
+    }).toList();
+
+    await prefs.setStringList(_recordsKey, updatedRecords);
+  }
+
+  static Future<Map<SlotMachine, Map<String, dynamic>>> getMachineSummaries() async {
+    final records = await getAllRecords();
+    Map<SlotMachine, Map<String, dynamic>> summaries = {};
+
+    for (var record in records) {
+      if (!summaries.containsKey(record.machine)) {
+        summaries[record.machine] = {
+          'totalGames': 0,
+          'totalBigCount': 0,
+          'totalRegCount': 0,
+          'totalbellCount': 0,
+          'totalCoinDifference': 0,  // 追加
+        };
+      }
+
+      var summary = summaries[record.machine]!;
+      summary['totalGames'] += record.gameCount;
+
+      if (!record.bigProbability.isInfinite && !record.bigProbability.isNaN) {
+        summary['totalBigCount'] += (record.gameCount / record.bigProbability).round();
+      }
+      if (!record.regProbability.isInfinite && !record.regProbability.isNaN) {
+        summary['totalRegCount'] += (record.gameCount / record.regProbability).round();
+      }
+      summary['totalbellCount'] += record.bellCount;
+      if (record.coinDifference != null) {
+        summary['totalCoinDifference'] += record.coinDifference!;
+      }
+    }
+
+    summaries.forEach((machine, data) {
+      if (data['totalGames'] > 0) {
+        if (data['totalBigCount'] > 0) {
+          data['avgBigProbability'] = data['totalGames'] / data['totalBigCount'];
+        } else {
+          data['avgBigProbability'] = double.infinity;
+        }
+
+        if (data['totalRegCount'] > 0) {
+          data['avgRegProbability'] = data['totalGames'] / data['totalRegCount'];
+        } else {
+          data['avgRegProbability'] = double.infinity;
+        }
+
+        // ベルの確率を計算 (追加)
+        if (data['totalbellCount'] > 0) {
+          data['avgbellProbability'] = data['totalGames'] / data['totalbellCount'];
+        } else {
+          data['avgbellProbability'] = double.infinity;
+        }
+
+        data['totalBonusCount'] = data['totalBigCount'] + data['totalRegCount'];
+        if (data['totalBonusCount'] > 0) {
+          data['avgTotalProbability'] = data['totalGames'] / data['totalBonusCount'];
+        } else {
+          data['avgTotalProbability'] = double.infinity;
+        }
+      }
+    });
+
+    return summaries;
+  }
+
+  // 特定の記録を削除
+  static Future<void> deleteRecord(DateTime date, SlotMachine machine) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> records = prefs.getStringList(_recordsKey) ?? [];
+
+    records.removeWhere((record) {
+      final recordData = PracticeRecord.fromJson(jsonDecode(record));
+      return recordData.date.isAtSameMomentAs(date) &&
+          recordData.machine == machine;
+    });
+
+    await prefs.setStringList(_recordsKey, records);
+  }
+
+  // 複数の記録を削除
+  static Future<void> deleteRecords(List<PracticeRecord> recordsToDelete) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> records = prefs.getStringList(_recordsKey) ?? [];
+
+    records.removeWhere((record) {
+      final recordData = PracticeRecord.fromJson(jsonDecode(record));
+      return recordsToDelete.any((r) =>
+      r.date.isAtSameMomentAs(recordData.date) &&
+          r.machine == recordData.machine
+      );
+    });
+
+    await prefs.setStringList(_recordsKey, records);
+  }
+
+  static String getProbabilityFraction(double probability) {
+    if (probability.isInfinite || probability.isNaN) return "－";
+    double roundedProbability = double.parse(probability.toStringAsFixed(2));
+    return "1/$roundedProbability";
+  }
+}
+```
+
+### services\slot_calculator.dart
+
+```
+// lib/services/slot_calculator.dart
+
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+
+import '../models/calculation_result.dart';
+
+enum SlotMachine {
+  kingHanahana,
+  hanahanaHouou,
+  dragonHanahana,
+}
+
+class SlotCalculator {
+  static const Map<SlotMachine, Map<String, List<double>>> machineParameters = {
+    SlotMachine.kingHanahana: {
+      'payout': [97, 99, 101, 104, 107, 110],
+      'single_big': [292, 280, 268, 257, 244, 232],
+      'single_reg': [489, 452, 420, 390, 360, 332],
+      'bell': [7.22, 7.218, 7.216, 7.077, 7.005, 6.967],
+      'big_game_num': [21], //BIGゲーム回数
+      'big_suika': [42.89, 39.01, 36.21, 32.25, 30.01, 28.01], //BIG中スイカ回数
+      'big_retro_sound': [48.0, 48.0, 48.0, 48.0, 48.0, 48.0], //BIG中レトロサウンド
+      'big_blue': [999, 999, 999, 999, 999, 999], //BIG後青
+      'big_yellow': [999, 999, 999, 999, 999, 999], //BIG後黄
+      'big_green': [999, 999, 999, 999, 999, 999], //BIG後緑
+      'big_red': [999, 999, 999, 999, 999, 999], //BIG後赤
+      'big_rainbow': [999, 999, 999, 999, 999, 999], //BIG後虹
+      'big_white': [999, 999, 999, 999, 999, 999], //BIG後白
+      'side_blue': [2.69, 4.29, 3.05, 4.72, 3.24, 4.10], //REGサイド青
+      'side_yellow': [4.07, 2.91, 4.23, 3.06, 4.96, 4.02], //REGサイド黄
+      'side_green': [4.37, 5.60, 3.77, 5.70, 3.49, 4.02], //REGサイド緑
+      'side_red': [6.55, 4.10, 5.96, 3.54, 5.04, 4.02], //REGサイド赤
+      'side_rainbow': [2048, 1024, 512, 256, 199.8, 99.9], //REGサイド虹
+      'reg_blue': [0, 102.40, 85.33, 42.67, 42.67, 42.67], //REG後青
+      'reg_yellow': [0, 0, 102.40, 73.14, 42.67, 42.67], //REG後黄
+      'reg_green': [0, 0, 0, 102.40, 73.14, 42.67], //REG後緑
+      'reg_red': [0, 0, 0, 0, 102.40, 73.14], //REG後赤
+      'reg_rainbow': [0, 0, 0, 0, 0, 102.40], //REG後虹
+      'reg_white': [1.00, 1.01, 1.02, 1.05, 1.08, 1.10], //REG後白
+      'big_sum': [292, 280, 268, 257, 244, 232],
+      'reg_sum': [489, 452, 420, 390, 360, 332],
+    },
+    SlotMachine.hanahanaHouou: {
+      'payout': [97, 99, 101, 103, 106, 109],
+      'single_big': [297, 284, 273, 262, 249, 236],
+      'single_reg': [496, 458, 425, 397, 366, 337],
+      'bell': [7.533, 7.498, 7.464, 7.447, 7.347, 7.306],
+      'big_game_num': [24], //BIGゲーム回数
+      'big_suika': [47.15, 44.28, 40.45, 39.72, 35.05, 32.13], //BIG中スイカ回数
+      'big_retro_sound': [48.0, 48.0, 48.0, 48.0, 48.0, 48.0], //BIG中レトロサウンド
+      'big_blue': [24.09, 22.60, 24.09, 18.20, 17.86, 16.98], //BIG後青
+      'big_yellow': [27.89, 26.75, 24.27, 21.14, 23.41, 19.28], //BIG後黄
+      'big_green': [52.01, 38.55, 36.41, 34.49, 31.21, 30.62], //BIG後緑
+      'big_red': [51.20, 59.58, 44.89, 54.16, 46.15, 46.15], //BIG後赤
+      'big_rainbow': [4096, 4096, 2048, 1024, 682.67, 256], //BIG後虹
+      'big_white': [1.13, 1.14, 1.15, 1.18, 1.18, 1.20], //BIG後白
+      'side_blue': [2.69, 4.29, 3.05, 4.72, 3.24, 4.10], //REGサイド青
+      'side_yellow': [4.07, 2.91, 4.23, 3.06, 4.96, 4.02], //REGサイド黄
+      'side_green': [4.37, 5.60, 3.77, 5.70, 3.49, 4.02], //REGサイド緑
+      'side_red': [6.55, 4.10, 5.96, 3.54, 5.04, 4.02], //REGサイド赤
+      'side_rainbow': [2048, 1024, 512, 256, 199.8, 99.9], //REGサイド虹
+      'reg_blue': [0, 102.40, 85.33, 42.67, 42.67, 42.67], //REG後青
+      'reg_yellow': [0, 0, 102.40, 73.14, 42.67, 42.67], //REG後黄
+      'reg_green': [0, 0, 0, 102.40, 73.14, 42.67], //REG後緑
+      'reg_red': [0, 0, 0, 0, 102.40, 73.14], //REG後赤
+      'reg_rainbow': [0, 0, 0, 0, 0, 102.40], //REG後虹
+      'reg_white': [1.00, 1.01, 1.02, 1.05, 1.08, 1.10], //REG後白
+      'big_sum': [297, 284, 273, 262, 249, 236],
+      'reg_sum': [496, 458, 425, 397, 366, 337],
+    },
+    SlotMachine.dragonHanahana: {
+      'payout': [97, 99, 101.17, 104, 107, 110.36],
+      'single_big': [256, 246.38, 234.90, 223.67, 212.09, 199.2],
+      'single_reg': [642.51, 585.14, 537.18, 489.07, 442.81, 399.61],
+      'bell': [7.219, 7.195, 7.152, 7.097, 7.052, 7.033],
+      'big_game_num': [20], //BIGゲーム回数
+      'big_suika': [48.09, 39.01, 36.21, 32.25, 30.01, 28.01], //BIG中スイカ回数
+      'big_retro_sound': [15.38, 12.99, 11.24, 9.90, 8.85, 8.00], //BIG中レトロサウンド
+      'big_blue': [24.09, 22.60, 24.09, 18.20, 17.86, 16.98], //BIG後青
+      'big_yellow': [27.89, 26.75, 24.27, 21.14, 23.41, 19.28], //BIG後黄
+      'big_green': [52.01, 38.55, 36.41, 34.49, 31.21, 30.62], //BIG後緑
+      'big_red': [51.20, 59.58, 44.89, 54.16, 46.15, 46.15], //BIG後赤
+      'big_rainbow': [4096, 4096, 2048, 1024, 682.67, 256], //BIG後虹
+      'big_white': [1.13, 1.14, 1.15, 1.18, 1.18, 1.20], //BIG後白
+      'side_blue': [2.69, 4.29, 3.05, 4.72, 3.24, 4.10], //REGサイド青
+      'side_yellow': [4.07, 2.91, 4.23, 3.06, 4.96, 4.02], //REGサイド黄
+      'side_green': [4.37, 5.60, 3.77, 5.70, 3.49, 4.02], //REGサイド緑
+      'side_red': [6.55, 4.10, 5.96, 3.54, 5.04, 4.02], //REGサイド赤
+      'side_rainbow': [2048, 1024, 512, 256, 199.8, 99.9], //REGサイド虹
+      'reg_blue': [0, 102.40, 85.33, 42.67, 42.67, 42.67], //REG後青
+      'reg_yellow': [0, 0, 102.40, 73.14, 42.67, 42.67], //REG後黄
+      'reg_green': [0, 0, 0, 102.40, 73.14, 42.67], //REG後緑
+      'reg_red': [0, 0, 0, 0, 102.40, 73.14], //REG後赤
+      'reg_rainbow': [0, 0, 0, 0, 0, 102.40], //REG後虹
+      'reg_white': [1.00, 1.01, 1.02, 1.05, 1.08, 1.10], //REG後白
+      'big_sum': [256, 246.38, 234.90, 223.67, 212.09, 199.2],
+      'reg_sum': [642.51, 585.14, 537.18, 489.07, 442.81, 399.61],
+    },
+  };
+
+  static CalculationResult calculate({
+    required String currentGame,
+    required String countSingleBig,
+    required String countSingleReg,
+    String bigGames = '0',
+    String extraBigGames = '0',
+    String bigSuika = '0',
+    required String countBell,
+    required String startGame,
+    required String regSum,
+    required String bigSum,
+    required String bigRetroSound,
+    String countBigBlue = '0',
+    String countBigYellow = '0',
+    String countBigGreen = '0',
+    String countBigRed = '0',
+    String countBigRainbow = '0',
+    String countBigWhite = '0',
+    String countSideBlue = '0',
+    String countSideYellow = '0',
+    String countSideGreen = '0',
+    String countSideRed = '0',
+    String countSideRainbow = '0',
+    String countRegBlue = '0',
+    String countRegYellow = '0',
+    String countRegGreen = '0',
+    String countRegRed = '0',
+    String countRegRainbow = '0',
+    String countRegWhite = '0',
+    required List<String> haibun,
+    required SlotMachine machine,
+  }) {
+    // 入力値の変換とバリデーション
+    int countSingleBigValue = int.tryParse(countSingleBig) ?? 0;
+    int countSingleRegValue = int.tryParse(countSingleReg) ?? 0;
+    int bigGamesValue = int.tryParse(bigGames) ?? 0;
+    int extraGames = int.tryParse(extraBigGames) ?? 0;
+    int bigSuikaValue = int.tryParse(bigSuika) ?? 0;
+    int countBellValue = int.tryParse(countBell) ?? 0;
+    int startGameValue = int.tryParse(startGame) ?? 0;
+    int regSumValue = int.tryParse(regSum) ?? 0;
+    int bigSumValue = int.tryParse(bigSum) ?? 0;
+    int bigRetroSoundValue = int.tryParse(bigRetroSound) ?? 0;
+
+    final bigParams = {
+      'blue': int.tryParse(countBigBlue) ?? 0,
+      'yellow': int.tryParse(countBigYellow) ?? 0,
+      'green': int.tryParse(countBigGreen) ?? 0,
+      'red': int.tryParse(countBigRed) ?? 0,
+      'rainbow': int.tryParse(countBigRainbow) ?? 0,
+      'white': int.tryParse(countBigWhite) ?? 0,
+    };
+
+    final sideParams = {
+      'blue': int.tryParse(countSideBlue) ?? 0,
+      'yellow': int.tryParse(countSideYellow) ?? 0,
+      'green': int.tryParse(countSideGreen) ?? 0,
+      'red': int.tryParse(countSideRed) ?? 0,
+      'rainbow': int.tryParse(countSideRainbow) ?? 0,
+    };
+
+    final regParams = {
+      'blue': int.tryParse(countRegBlue) ?? 0,
+      'yellow': int.tryParse(countRegYellow) ?? 0,
+      'green': int.tryParse(countRegGreen) ?? 0,
+      'red': int.tryParse(countRegRed) ?? 0,
+      'rainbow': int.tryParse(countRegRainbow) ?? 0,
+      'white': int.tryParse(countRegWhite) ?? 0,
+    };
+
+    int currentGameValue = (int.tryParse(currentGame) ?? 0) - startGameValue;
+
+    // 入力値の検証
+    bool hasValidData = false;
+    if (currentGameValue > 0) {
+      if (countSingleBigValue > 0 || countSingleRegValue > 0 || countBellValue > 0) {
+        hasValidData = true;
+      }
+    }
+    if (startGameValue > 0) {
+      if (regSumValue > 0 || bigSumValue > 0) {
+        hasValidData = true;
+      }
+    }
+
+    if (!hasValidData) {
+      // デフォルト値を返す
+      return CalculationResult(
+        probabilities: List.filled(6, 16.67),
+        averageSettings: 3.5,
+        averagePayout: machineParameters[machine]!['payout']!
+            .reduce((a, b) => a + b) / 6,
+        averageWage: 0,
+        probStrings: List.filled(7, "－"),
+      );
+    }
+
+    List<int> haibunValues = haibun
+        .map((e) => int.tryParse(e) ?? 1)
+        .toList();
+
+    // 機種のパラメータを取得
+    final params = machineParameters[machine]!;
+
+    // 確率計算用の配列
+    List<List<double>> probs = List.generate(24, (_) => List.filled(6, 1.0));
+
+    // 単独BIG確率計算
+    if (currentGameValue > 0 && countSingleBigValue > 0) {
+      _calculateProbability(
+          currentGameValue,
+          countSingleBigValue,
+          params['single_big']!,
+          probs[0]
+      );
+    }
+
+    // 単独REG確率計算
+    if (currentGameValue > 0 && countSingleRegValue > 0) {
+      _calculateProbability(
+          currentGameValue - countSingleBigValue,
+          countSingleRegValue,
+          params['single_reg']!,
+          probs[1]
+      );
+    }
+
+    // ベル確率計算
+    if (currentGameValue > 0 && countBellValue > 0) {
+      _calculateProbability(
+          currentGameValue - countSingleBigValue - countSingleRegValue,
+          countBellValue,
+          params['bell']!,
+          probs[2]
+      );
+    }
+
+    // データカウンターREG確率計算
+    if (startGameValue > 0 && regSumValue > 0) {
+      _calculateProbability(
+          startGameValue,
+          regSumValue,
+          params['reg_sum']!,
+          probs[3]
+      );
+    }
+
+    // データカウンターBIG確率計算
+    if (startGameValue > 0 && bigSumValue > 0) {
+      _calculateProbability(
+          startGameValue - regSumValue,
+          bigSumValue,
+          params['big_sum']!,
+          probs[4]
+      );
+    }
+
+    // レトロ確率計算
+    if (currentGameValue > 0 && bigRetroSoundValue > 0) {
+      _calculateProbability(
+          countSingleBigValue,
+          bigRetroSoundValue,
+          params['big_retro_sound']!,
+          probs[5]
+      );
+    }
+
+    // BIG後の色別処理
+    int usedBigColorCount = 0;
+    bigParams.forEach((color, count) {
+      if (count > 0) {
+        _calculateProbability(
+            countSingleBigValue -usedBigColorCount,
+            count,
+            params['big_$color']!,
+            probs[6 + bigParams.keys.toList().indexOf(color)]
+        );
+      }
+
+      usedBigColorCount += count;
+    });
+
+    // REGサイドの色別処理
+    int usedSideColorCount = 0;
+    sideParams.forEach((color, count) {
+      if (count > 0) {
+        _calculateProbability(
+            countSingleRegValue -usedSideColorCount,
+            count,
+            params['side_$color']!,
+            probs[12 + sideParams.keys.toList().indexOf(color)]
+        );
+      }
+
+      usedSideColorCount += count;
+    });
+
+    // REG後の色別処理
+    //int usedRegColorCount = 0;
+    regParams.forEach((color, count) {
+      if (count > 0) {
+        _calculateProbability(
+            countSingleRegValue,
+            count,
+            params['reg_$color']!,
+            probs[17 + regParams.keys.toList().indexOf(color)]
+        );
+      }
+
+      //usedRegColorCount += count;
+    });
+
+    // BIG中スイカ
+    if (bigGamesValue > 0 && bigSuikaValue > 0) {
+      _calculateProbability(
+          bigGamesValue + extraGames,  // 余剰ゲーム数を加算
+          bigSuikaValue,
+          params['big_suika']!,
+          probs[23]
+      );
+    }
+
+    // 設定配分の計算
+    double haibunSum = haibunValues.reduce((a, b) => a + b).toDouble();
+    List<double> haibunRatios = haibunValues.map((v) => v / haibunSum).toList();
+
+    // 総合確率の計算
+    List<double> finalProbs = List.filled(6, 0.0);
+    for (int i = 0; i < 6; i++) {
+      double settingProb = haibunRatios[i];
+      for (int j = 0; j < probs.length; j++) {
+        settingProb *= probs[j][i];
+      }
+      finalProbs[i] = settingProb;
+    }
+
+    // 確率の正規化
+    double totalProb = finalProbs.reduce((a, b) => a + b);
+    List<double> probabilities = finalProbs
+        .map((p) => double.parse((p / totalProb * 100).toStringAsFixed(2)))
+        .toList();
+
+    // 出現確率の文字列計算
+    List<String> probStrings = [
+      _calculateProbString(currentGameValue, countSingleBigValue),
+      _calculateProbString(currentGameValue, countSingleRegValue),
+      _calculateProbString(currentGameValue, countBellValue),
+      _calculateProbString(startGameValue, regSumValue),
+      _calculateProbString(startGameValue, bigSumValue),
+      _calculateProbString(currentGameValue, bigRetroSoundValue),
+    ];
+
+    // 平均値の計算
+    double averageSettings = _calculateAverageSettings(probabilities);
+    double averagePayout = _calculateAveragePayout(probabilities, params['payout']!);
+    double averageWage = _calculateAverageWage(probabilities, params['payout']!);
+
+    return CalculationResult(
+      probabilities: probabilities,
+      averageSettings: averageSettings,
+      averagePayout: averagePayout,
+      averageWage: averageWage,
+      probStrings: probStrings,
+    );
+  }
+
+  static void _calculateProbability(
+      int total,
+      int count,
+      List<double> settings,
+      List<double> results
+      ) {
+    try {
+      if (total <= 0 || count <= 0) return;
+
+      // 対数を使用して確率を計算
+      for (int i = 0; i < 6; i++) {
+        double p;
+        if(settings[i] == 0){
+          p = 1.0 / 999999.0;  // 非常に小さい確率を設定
+        }else{
+          p = 1.0 / settings[i];
+        }
+        double q = 1.0 - p;
+
+        // 二項分布の確率を対数で計算
+        double logProb = 0.0;
+
+        // log(nCr)の計算
+        for (int j = 0; j < count; j++) {
+          logProb += log(total - j) - log(j + 1);
+        }
+
+        // p^r * q^(n-r)の対数計算
+        logProb += count * log(p) + (total - count) * log(q);
+
+        // 対数から通常の値に変換
+        results[i] = exp(logProb);
+
+        // 数値が非常に小さい場合は最小値を設定
+        if (results[i].isInfinite || results[i].isNaN || results[i] < 1e-308) {
+          results[i] = 1e-308;
+        }
+      }
+
+      // 結果の正規化
+      double sum = results.reduce((a, b) => a + b);
+      if (sum > 0 && sum.isFinite) {
+        for (int i = 0; i < 6; i++) {
+          results[i] /= sum;
+        }
+      } else {
+        // 計算が破綻した場合は均等な確率を設定
+        for (int i = 0; i < 6; i++) {
+          results[i] = 1.0 / 6.0;
+        }
+      }
+    } catch (e) {
+      // エラー発生時にToastを表示
+      Fluttertoast.showToast(
+          msg: "計算中にエラーが発生しました: $e",
+          toastLength: Toast.LENGTH_LONG,
+          gravity: ToastGravity.BOTTOM,
+          timeInSecForIosWeb: 4,
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+          fontSize: 16.0
+      );
+
+      // エラー時は均等な確率を設定
+      for (int i = 0; i < 6; i++) {
+        results[i] = 1.0 / 6.0;
+      }
+    }
+  }
+
+  static String _calculateProbString(int total, int count) {
+    if (total == 0 || count == 0) {
+      return "－";
+    }
+    return "1/${(total/count).round()}";
+  }
+
+  static double _calculateAverageSettings(List<double> probabilities) {
+    double sum = 0;
+    for (int i = 0; i < probabilities.length; i++) {
+      sum += (i + 1) * (probabilities[i] / 100);
+    }
+    return double.parse(sum.toStringAsFixed(2));
+  }
+
+  static double _calculateAveragePayout(List<double> probabilities, List<double> payouts) {
+    double sum = 0;
+    for (int i = 0; i < probabilities.length; i++) {
+      sum += payouts[i] * (probabilities[i] / 100);
+    }
+    return double.parse(sum.toStringAsFixed(2));
+  }
+
+  static double _calculateAverageWage(List<double> probabilities, List<double> payouts) {
+    double sum = 0;
+    for (int i = 0; i < probabilities.length; i++) {
+      sum += 2400 * (payouts[i] - 100) / 100 * 20 * (probabilities[i] / 100);
+    }
+    return double.parse(sum.toStringAsFixed(0));
+  }
+}
+```
+
