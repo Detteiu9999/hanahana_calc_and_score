@@ -5,6 +5,7 @@ import '../models/practice_record.dart';
 import '../services/record_service.dart';
 import '../services/slot_calculator.dart';
 import 'monthly_summaries_tab.dart';
+import 'yearly_and_total_summaries_tab.dart'; // 新しく追加したファイル
 
 class RecordsScreen extends StatefulWidget {
   @override
@@ -157,7 +158,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text('実践記録'),
@@ -202,6 +203,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
               Tab(text: '記録一覧'),
               Tab(text: '機種別集計'),
               Tab(text: '月別集計'),
+              Tab(text: '年別・通算'),
             ],
           ),
         ),
@@ -210,6 +212,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
             _buildRecordsList(),
             _buildMachineSummaries(),
             MonthlySummariesTab(records: _records),
+            YearlyAndTotalSummariesTab(records: _records),
           ],
         ),
       ),
