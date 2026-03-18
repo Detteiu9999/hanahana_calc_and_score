@@ -113,6 +113,8 @@ class _RecordsScreenState extends State<RecordsScreen> {
         return 'ドラゴンハナハナ閃光';
       case SlotMachine.starHanahana:
         return 'スターハナハナ';
+      case SlotMachine.newKingHanahanaV:
+        return 'ニューキングハナハナV';
     }
   }
 

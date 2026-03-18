@@ -562,6 +562,10 @@ class _SlotAnalyzerScreenState extends State<SlotAnalyzerScreen> with WidgetsBin
                             value: SlotMachine.starHanahana,
                             child: Text('スターハナハナ'),
                           ),
+                          DropdownMenuItem(
+                            value: SlotMachine.newKingHanahanaV,
+                            child: Text('ニューキングハナハナV'),
+                          ),
                         ],
                       ),
                     ),
