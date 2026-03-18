@@ -7,7 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+ // SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
   runApp(SlotAnalyzerApp());
 }
