@@ -48,58 +48,109 @@ class _RecordsScreenState extends State<RecordsScreen> {
   }
 
   Future<void> _showCoinDifferenceDialog(PracticeRecord record) async {
-    final controller = TextEditingController(
-      text: record.coinDifference?.toString() ?? '',
-    );
+    final inController = TextEditingController();
+    final outController = TextEditingController();
 
     return showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('差枚数の入力'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${_formatDate(record.date)}\n'
-                  '${_getMachineName(record.machine)}\n'
-                  '実践G数: ${record.gameCount}G',
-              style: TextStyle(fontSize: 14),
-            ),
-            SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.numberWithOptions(signed: true),
-              decoration: InputDecoration(
-                labelText: '差枚数',
-                suffix: Text('枚'),
-                border: OutlineInputBorder(),
+      builder: (context) {
+        // StatefulBuilderを使用してダイアログ内の状態をリアルタイムに更新
+        return StatefulBuilder(
+          builder: (context, setState) {
+            int? inValue = int.tryParse(inController.text);
+            int? outValue = int.tryParse(outController.text);
+            int? diff;
+
+            // スロットにおける差枚数は一般的に「回収(OUT) - 投資(IN)」で計算します
+            if (inValue != null && outValue != null) {
+              diff = outValue - inValue;
+            }
+
+            return AlertDialog(
+              title: Text('差枚数の入力'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${_formatDate(record.date)}\n'
+                        '${_getMachineName(record.machine)}\n'
+                        '実践G数: ${record.gameCount}G',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  SizedBox(height: 16),
+
+                  // すでに差枚数が記録されている場合は現在の値を表示
+                  if (record.coinDifference != null) ...[
+                    Text(
+                      '現在の記録: ${record.coinDifference}枚',
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(height: 12),
+                  ],
+
+                  TextField(
+                    controller: inController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'IN (投資/投入)',
+                      suffix: Text('枚'),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) => setState(() {}),
+                  ),
+                  SizedBox(height: 12),
+                  TextField(
+                    controller: outController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'OUT (回収/払出)',
+                      suffix: Text('枚'),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) => setState(() {}),
+                  ),
+                  SizedBox(height: 16),
+                  Text(
+                    '差枚数 (OUT - IN): ${diff != null ? '$diff' : '---'} 枚',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: diff != null
+                          ? (diff >= 0 ? Colors.blue : Colors.red)
+                          : null,
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('キャンセル'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final value = int.tryParse(controller.text);
-              if (value != null) {
-                await RecordService.updateCoinDifference(
-                  record.date,
-                  record.machine,
-                  value,
-                );
-                Navigator.pop(context);
-                _loadData();  // データを再読み込み
-              }
-            },
-            child: Text('保存'),
-          ),
-        ],
-      ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('キャンセル'),
+                ),
+                TextButton(
+                  // INとOUT両方が入力されていないと保存できないようにする
+                  onPressed: diff != null
+                      ? () async {
+                    await RecordService.updateCoinDifference(
+                      record.date,
+                      record.machine,
+                      diff!,
+                    );
+                    Navigator.pop(context);
+                    _loadData(); // データを再読み込み
+                  }
+                      : null,
+                  child: Text('保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -336,12 +387,58 @@ class _RecordsScreenState extends State<RecordsScreen> {
         final summary = _summaries[machine]!;
         final totalCoinDifference = summary['totalCoinDifference'] ?? 0;
         final totalGames = summary['totalGames'] ?? 0;
+        final totalBigCount = summary['totalBigCount'] ?? 0;
+        final totalRegCount = summary['totalRegCount'] ?? 0;
+        final totalBudouCount = summary['totalBudouCount'] ?? 0;
 
         // 機械割の計算
         double machinePercentage = 100.0;  // デフォルト値
         if (totalGames > 0) {
           // (総実践ゲーム数×3 + 総差枚数) / (総実践ゲーム数×3) × 100
           machinePercentage = ((totalGames * 3 + totalCoinDifference) / (totalGames * 3)) * 100;
+        }
+
+        // --- 追加：推定平均設定の算出 ---
+        double estimatedAverageSetting = 0.0;
+        if (totalGames > 0) {
+          // 既存のSlotCalculator.calculateをうまく利用するため、
+          // total2 (データカウンターG数) に総ゲーム数、
+          // countF, countG にボーナス合計回数を指定。
+          // ぶどう(countE)は自分で回したG数(total1Value)で計算されるため、
+          // total1に (totalGames * 2) を渡すことで内部的に total1Value = totalGames になります。
+          final result = SlotCalculator.calculate(
+            currentGame: (totalGames * 2).toString(),
+            countSingleBig: '',
+            countSingleReg: '',
+            bigGames: '',
+            extraBigGames: '',
+            bigSuika: '',
+            countBell: totalBudouCount.toString(),
+            startGame: totalGames.toString(),
+            regSum: totalBigCount.toString(),
+            bigSum: totalRegCount.toString(),
+            bigRetroSound: '',
+            countBigBlue: '',
+            countBigYellow: '',
+            countBigGreen: '',
+            countBigRed: '',
+            countBigRainbow: '',
+            countBigWhite: '',
+            countSideBlue: '',
+            countSideYellow: '',
+            countSideGreen: '',
+            countSideRed: '',
+            countSideRainbow: '',
+            countRegBlue: '',
+            countRegYellow: '',
+            countRegGreen: '',
+            countRegRed: '',
+            countRegRainbow: '',
+            countRegWhite: '',
+            haibun: ['1', '1', '1', '1', '1', '1'], // 均等配分で推測
+            machine: machine,
+          );
+          estimatedAverageSetting = result.averageSettings;
         }
 
         return Card(
@@ -351,6 +448,39 @@ class _RecordsScreenState extends State<RecordsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _getMachineName(machine),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+
+                    if (totalGames > 0)
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.orange),
+                        ),
+                        child: Text(
+                          '推定平均設定: ${estimatedAverageSetting.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            color: Colors.orange[800],
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                SizedBox(height: 8),
                 Text(
                   _getMachineName(machine),
                   style: TextStyle(
